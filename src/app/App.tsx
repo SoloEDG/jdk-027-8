@@ -1,12 +1,22 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, History, Menu, MoreHorizontal, Redo2, Save, Undo2 } from "lucide-react";
 import { AssetPanel } from "@/features/assets";
-import { CanvasStage, LayerPanel, PresetStrip, applyPreset } from "@/features/composition";
+import { CanvasStage, LayerPanel, PresetStrip, applyPreset, clampPosition, offsetPosition, NUDGE_STEP, NUDGE_STEP_LARGE } from "@/features/composition";
 import { ExportPanel, downloadPng } from "@/features/export";
 import { backgrounds, canvasSizes, defaultLayers, presets } from "@/shared/defaults";
 import type { BackgroundAsset, CanvasSize, Layer, Preset } from "@/shared/types";
 
 const makeId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+// 焦点在输入控件（文案输入框、滑杆等）时不拦截按键，保留原生输入行为
+const isEditableTarget = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select") !== null);
+
+const NUDGE_DELTAS: Record<string, { dx: number; dy: number }> = {
+  ArrowUp: { dx: 0, dy: -1 },
+  ArrowDown: { dx: 0, dy: 1 },
+  ArrowLeft: { dx: -1, dy: 0 },
+  ArrowRight: { dx: 1, dy: 0 }
+};
 
 export default function App() {
   const [background, setBackground] = useState<BackgroundAsset>(backgrounds[0]);
@@ -26,12 +36,46 @@ export default function App() {
   const addBackground = (file: File) => { const asset: BackgroundAsset = { id: makeId("upload"), label: file.name.replace(/\.[^/.]+$/, "").slice(0, 16) || "上传底图", accent: "#ffffff", style: `url("${URL.createObjectURL(file)}") center / cover no-repeat` }; setBackgroundOptions((current) => [...current, asset]); setBackground(asset); };
   const moveLayer = (direction: "up" | "down") => { if (selectedIndex < 0) return; const next = direction === "up" ? selectedIndex + 1 : selectedIndex - 1; if (next < 0 || next >= layers.length) return; setLayers((current) => { const copy = [...current]; [copy[selectedIndex], copy[next]] = [copy[next], copy[selectedIndex]]; return copy; }); };
   const removeSelected = () => { if (!selected) return; setLayers((current) => current.filter((layer) => layer.id !== selected.id)); setSelectedId(layers[selectedIndex - 1]?.id ?? layers[selectedIndex + 1]?.id ?? null); };
+  const duplicateLayer = (id: string) => {
+    const source = layers.find((layer) => layer.id === id);
+    if (!source) return;
+    // 副本拥有新身份（id / 名称），继承样式、旋转、透明度，位置独立错开
+    const copy: Layer = { ...source, id: makeId(source.kind), name: `${source.name} 副本`, x: offsetPosition(source.x), y: offsetPosition(source.y) };
+    setLayers((current) => {
+      const index = current.findIndex((layer) => layer.id === id);
+      if (index < 0) return current;
+      const next = [...current];
+      next.splice(index + 1, 0, copy);
+      return next;
+    });
+    setSelectedId(copy.id);
+  };
+  const duplicateSelected = () => { if (selected) duplicateLayer(selected.id); };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && (event.key === "d" || event.key === "j")) {
+        if (!selectedId) return;
+        event.preventDefault();
+        duplicateLayer(selectedId);
+        return;
+      }
+      const delta = NUDGE_DELTAS[event.key];
+      if (!delta || !selectedId || event.metaKey || event.ctrlKey || event.altKey) return;
+      event.preventDefault();
+      const step = event.shiftKey ? NUDGE_STEP_LARGE : NUDGE_STEP;
+      setLayers((current) => current.map((layer) => layer.id === selectedId ? { ...layer, x: clampPosition(layer.x + delta.dx * step), y: clampPosition(layer.y + delta.dy * step) } : layer));
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedId, layers]);
   const selectPreset = (preset: Preset) => { setLayers((current) => applyPreset(current, preset)); setBackground(backgrounds.find((item) => item.id === preset.backgroundId) ?? backgrounds[0]); setExportSize(preset.canvas); setActivePreset(preset.id); };
   const exportArtwork = () => downloadPng({ background, layers, size: exportSize });
 
   return <div className="app-shell">
     <header className="topbar"><div className="brand"><span className="brand-mark">P</span><span>POSTURE</span><span className="brand-divider" /><span className="workspace-name">情绪海报工作台</span></div><div className="project-status"><span className="status-dot" />{projectLabel}<span className="status-divider" />自动保存已开启</div><div className="top-actions"><button className="icon-button" aria-label="撤销"><Undo2 size={17} /></button><button className="icon-button" aria-label="重做"><Redo2 size={17} /></button><button className="save-button" onClick={() => { setSaved(true); window.setTimeout(() => setSaved(false), 1800); }}>{saved ? <Check size={16} /> : <Save size={16} />}<span>{saved ? "已保存" : "保存"}</span></button><button className="icon-button" aria-label="更多"><MoreHorizontal size={18} /></button><button className="avatar">LC</button></div></header>
     <div className="mobile-toolbar"><button className="icon-button"><Menu size={18} /></button><span>POSTURE / 工作区</span><button className="icon-button"><MoreHorizontal size={18} /></button></div>
-    <main className="workspace"><AssetPanel background={background} backgroundOptions={backgroundOptions} onBackgroundChange={setBackground} onUpload={addBackground} onAddSticker={addSticker} setLayers={setLayers} /><section className="canvas-column"><div className="canvas-toolbar"><div><span className="eyebrow">CURRENT BOARD</span><h1>Weekend moodboard <ChevronDown size={18} /></h1></div><div className="canvas-toolbar-actions"><button className="toolbar-button"><History size={15} />版本</button><button className="toolbar-button">100%</button><button className="toolbar-button">适配画布</button></div></div><div className="canvas-wrap"><CanvasStage background={background} layers={layers} selectedId={selectedId} onSelect={setSelectedId} onChange={updateLayer} /></div><PresetStrip activeId={activePreset} onApply={selectPreset} /></section><section className="right-column"><LayerPanel layers={layers} selectedId={selectedId} onSelect={setSelectedId} onChange={updateLayer} onRemove={removeSelected} onAddText={addText} onMove={moveLayer} /><ExportPanel sizes={canvasSizes} selected={exportSize} onChange={setExportSize} onExport={exportArtwork} /></section></main>
+    <main className="workspace"><AssetPanel background={background} backgroundOptions={backgroundOptions} onBackgroundChange={setBackground} onUpload={addBackground} onAddSticker={addSticker} setLayers={setLayers} /><section className="canvas-column"><div className="canvas-toolbar"><div><span className="eyebrow">CURRENT BOARD</span><h1>Weekend moodboard <ChevronDown size={18} /></h1></div><div className="canvas-toolbar-actions"><button className="toolbar-button"><History size={15} />版本</button><button className="toolbar-button">100%</button><button className="toolbar-button">适配画布</button></div></div><div className="canvas-wrap"><CanvasStage background={background} layers={layers} selectedId={selectedId} onSelect={setSelectedId} onChange={updateLayer} /></div><PresetStrip activeId={activePreset} onApply={selectPreset} /></section><section className="right-column"><LayerPanel layers={layers} selectedId={selectedId} onSelect={setSelectedId} onChange={updateLayer} onRemove={removeSelected} onAddText={addText} onMove={moveLayer} onDuplicate={duplicateSelected} /><ExportPanel sizes={canvasSizes} selected={exportSize} onChange={setExportSize} onExport={exportArtwork} /></section></main>
   </div>;
 }

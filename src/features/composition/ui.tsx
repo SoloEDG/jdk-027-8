@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { ArrowDown, ArrowUp, Copy, GripVertical, Minus, Plus, RotateCcw, Type } from "lucide-react";
 import { presets } from "@/shared/defaults";
 import type { BackgroundAsset, Layer, Preset } from "@/shared/types";
+import { clampPosition } from "./position";
 
 type StageProps = { background: BackgroundAsset; layers: Layer[]; selectedId: string | null; onSelect: (id: string) => void; onChange: (id: string, patch: Partial<Layer>) => void };
 
@@ -14,8 +15,8 @@ export function CanvasStage({ background, layers, selectedId, onSelect, onChange
     const startY = event.clientY;
     const start = { x: layer.x, y: layer.y };
     const handleMove = (moveEvent: PointerEvent) => {
-      const nextX = Math.min(94, Math.max(6, start.x + ((moveEvent.clientX - startX) / target.clientWidth) * 100));
-      const nextY = Math.min(94, Math.max(6, start.y + ((moveEvent.clientY - startY) / target.clientHeight) * 100));
+      const nextX = clampPosition(start.x + ((moveEvent.clientX - startX) / target.clientWidth) * 100);
+      const nextY = clampPosition(start.y + ((moveEvent.clientY - startY) / target.clientHeight) * 100);
       onChange(layer.id, { x: nextX, y: nextY });
     };
     const finish = () => { window.removeEventListener("pointermove", handleMove); window.removeEventListener("pointerup", finish); };
@@ -29,9 +30,9 @@ export function CanvasStage({ background, layers, selectedId, onSelect, onChange
   </div>;
 }
 
-type LayerPanelProps = { layers: Layer[]; selectedId: string | null; onSelect: (id: string) => void; onChange: (id: string, patch: Partial<Layer>) => void; onRemove: () => void; onAddText: () => void; onMove: (direction: "up" | "down") => void };
+type LayerPanelProps = { layers: Layer[]; selectedId: string | null; onSelect: (id: string) => void; onChange: (id: string, patch: Partial<Layer>) => void; onRemove: () => void; onAddText: () => void; onMove: (direction: "up" | "down") => void; onDuplicate: () => void };
 
-export function LayerPanel({ layers, selectedId, onSelect, onChange, onRemove, onAddText, onMove }: LayerPanelProps) {
+export function LayerPanel({ layers, selectedId, onSelect, onChange, onRemove, onAddText, onMove, onDuplicate }: LayerPanelProps) {
   const selected = layers.find((layer) => layer.id === selectedId);
   return <aside className="side-panel layer-panel">
     <div className="panel-heading"><div><span className="eyebrow">02 / COMPOSITION</span><h2>图层</h2></div><GripVertical size={17} /></div>
@@ -42,7 +43,8 @@ export function LayerPanel({ layers, selectedId, onSelect, onChange, onRemove, o
       {selected.kind === "text" && <label className="field-label">文案<input value={selected.content} onChange={(event) => onChange(selected.id, { content: event.target.value })} /></label>}
       <label className="field-label">缩放 <span>{Math.round(selected.scale * 100)}%</span><input type="range" min="0.5" max="2" step="0.05" value={selected.scale} onChange={(event) => onChange(selected.id, { scale: Number(event.target.value) })} /></label>
       <label className="field-label">旋转 <span>{selected.rotation}°</span><input type="range" min="-30" max="30" step="1" value={selected.rotation} onChange={(event) => onChange(selected.id, { rotation: Number(event.target.value) })} /></label>
-      <div className="move-actions"><button className="small-button" onClick={() => onMove("up")}><ArrowUp size={14} />上移</button><button className="small-button" onClick={() => onMove("down")}><ArrowDown size={14} />下移</button><button className="small-button" onClick={() => onChange(selected.id, { rotation: 0 })}><RotateCcw size={14} />复位角度</button></div>
+      <div className="move-actions"><button className="small-button" onClick={() => onMove("up")}><ArrowUp size={14} />上移</button><button className="small-button" onClick={() => onMove("down")}><ArrowDown size={14} />下移</button><button className="small-button" onClick={onDuplicate}><Copy size={14} />复制</button><button className="small-button" onClick={() => onChange(selected.id, { rotation: 0 })}><RotateCcw size={14} />复位角度</button></div>
+      <p className="inspector-hint">方向键微调 · Shift+方向键 大步移动 · Ctrl/⌘+D 复制</p>
     </div>}
   </aside>;
 }
